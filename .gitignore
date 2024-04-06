@@ -1,0 +1,93 @@
+# Operating system related files:
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Thumbnails
+._.Trashes
+
+# Files that might appear on external drives
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Directory that contains the mounted filesystem images
+/.mounts
+
+# Compiled source #
+###################
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Packages #
+############
+# It's generally a good idea to exclude package directories,
+# which contain compiled code or binary packages.
+# For example, node_modules for Node.js, or env for Python virtualenv.
+node_modules/
+env/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Logs and databases #
+######################
+*.log
+*.sql
+*.sqlite
+
+# Editor directories and files #
+################################
+# Many text editors and IDEs create directories to store project-specific
+# settings, which should not be tracked in version control.
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files #
+#####################
+.env
+.env.local
+
+# Ignore all #
+##############
+# Be careful with this, it ignores everything except what is explicitly included
+# *
+# !.gitignore
+# !README.md
+# ... other files and directories you want to explicitly include
+
+# Miscellaneous #
+#################
+# Other files and directories to ignore that may be specific to your workflow
+.DS_Store?
+ehthumbs.db
+*.stackdump
+
+# Ignore folders #
+##################
+__pycache__/
+slurm/
+
+# Ignore everything in the data directory
+data/*
+raw_data/*
+raindrop_processed_data/
