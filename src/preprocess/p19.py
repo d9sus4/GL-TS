@@ -29,8 +29,9 @@ This program takes 2 keyword arguments:
             `num_classes` (int): how many classification classes are there.
             `sensor_names` (list of strings): names of the sensors, sized (num_sensors).
             `class_names` (list of strings): names of the classes, starting from 0 to num_classes-1.
+            `class_counts` (ndarray of int32): number of samples in each class, sized (num_classes).
             `mean` (ndarray of float32): mean observed values in each sensor, shaped as (num_sensors).
-            `std` (ndarray of float32): std of observed values in each sensor, shaped as [num_sensors].
+            `std` (ndarray of float32): std of observed values in each sensor, shaped as (num_sensors).
             `is_categorical` (ndarray of boolean): True if there is any categorical column (sensor).
             `sample_interval` (float32): dataset's constant sample interval in hour. Note that P19 is originally sampled at 1.0 hr.
                 In case this term is negative or NaN, observations may not be regularly sampled, i.e. consecutive rows may not have same time intervals in between them.
@@ -47,7 +48,9 @@ import h5py
 from glob import glob
 from tqdm import tqdm
 
-WRITE_OUT = True
+from ..dataset import MyHDF5Handler
+# TODO: use handler to read & write hdf5
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Preprocess P19.')
@@ -61,7 +64,7 @@ def parse_args():
     return args
 
 
-def process_file(fp):
+def process_psv(fp):
     df = pd.read_csv(fp, sep='|')
     # extract demographic information
     if pd.isna(df.iloc[0]['Unit1']) or pd.isna(df.iloc[0]['Unit2']):
@@ -86,81 +89,6 @@ def process_file(fp):
     return obs, stamp, mask, label, demogr
 
 
-def main_legacy():
-    args = parse_args()
-
-    # ensure output directories exist
-    segment_dir = os.path.join(args.out_dir, 'segments')
-    if WRITE_OUT:
-        os.makedirs(segment_dir, exist_ok=True)
-
-    psv_paths = glob(os.path.join(args.root_dir, 'training_set*/p*.psv'))
-    print(f'Found {len(psv_paths)} psv files. Start processing.')
-
-    # accumulators for calculating mean and std
-    sum_obs = np.zeros(34, dtype=np.float64)
-    sum_sq_obs = np.zeros(34, dtype=np.float64)
-    count_obs = np.zeros(34, dtype=np.float64)
-
-    # init metadata records
-    metadata = {
-        'size': 0,
-        'num_sensors': 34,  # first 34 columns are sensors
-        'num_classes': 2,  # binary classification for sepsis
-        'sensor_names': [],  # to be filled later
-        'class_names': ['Non-sepsis', 'Sepsis'],
-        'mean': [], # to be filled later
-        'std': [], # to be filled later
-        'is_categorical': np.array([False] * 34),  # no categorical feature in P19
-        'sample_interval': args.resample
-    }
-
-    # get column names
-    example_df = pd.read_csv(psv_paths[0], sep='|')
-    metadata['sensor_names'] = example_df.columns.tolist()[:34]
-
-    for i, fp in enumerate(tqdm(psv_paths, desc="Processing files")):
-        try:
-            obs, stamp, mask, label, demogr = process_file(fp)
-        except Exception as e:
-            print(f'Something is off ({type(e)}) processing {fp}, skipping it.')
-            continue
-        
-        # update sum and sum of squares for non-missing values
-        valid_obs_mask = ~np.isnan(obs)
-        sum_obs += np.where(valid_obs_mask, obs, 0).sum(axis=0)
-        sum_sq_obs += np.where(valid_obs_mask, obs**2, 0).sum(axis=0)
-        count_obs += valid_obs_mask.sum(axis=0)
-        
-        # save current segment
-        # extract the base name without the '.psv' extension
-        base_name = os.path.basename(fp)
-        segment_name = base_name.replace('.psv', '.pkl')
-        # construct the path for the processed segment file
-        segment_path = os.path.join(segment_dir, segment_name)
-        if WRITE_OUT:
-            with open(segment_path, 'wb') as f:
-                pickle.dump({'obs': obs, 'stamp': stamp, 'mask': mask, 'label': label, 'demogr': demogr}, f)
-            
-        metadata['size'] += 1
-
-    # calculate mean and std
-    mean_obs = sum_obs / count_obs
-    var_obs = (sum_sq_obs - sum_obs**2 / count_obs) / count_obs
-    std_obs = np.sqrt(var_obs)
-
-    # update metadata with calculated mean and std
-    metadata['mean'] = mean_obs.astype(np.float32)
-    metadata['std'] = std_obs.astype(np.float32)
-
-    # save metadata
-    if WRITE_OUT:
-        with open(os.path.join(args.out_dir, 'metadata.pkl'), 'wb') as f:
-            pickle.dump(metadata, f)
-
-    print(f'Processed {metadata["size"]} files.')
-
-
 def main():
     args = parse_args()
 
@@ -178,13 +106,14 @@ def main():
 
     # init metadata records
     metadata = {
-        'size': 0,
+        'size': 0, # to be counted later on the fly
         'num_sensors': 34,  # first 34 columns are sensors
         'num_classes': 2,  # binary classification for sepsis
         'sensor_names': [],  # to be filled later
         'class_names': ['Non-sepsis', 'Sepsis'],
-        'mean': [], # to be filled later
-        'std': [], # to be filled later
+        'class_counts': np.zeros(2, dtype=np.int32), # to be counted later on the fly
+        'mean': None, # to be filled later
+        'std': None, # to be filled later
         'is_categorical': np.array([False] * 34),  # no categorical feature in P19
         'sample_interval': args.resample if args.resample is not None and args.resample > 0 else np.nan
     }
@@ -199,7 +128,7 @@ def main():
         meta_group = f.create_group('meta')
         for i, fp in enumerate(tqdm(psv_paths, desc="Processing .psv files...")):
             try:
-                obs, stamp, mask, label, demogr = process_file(fp)
+                obs, stamp, mask, label, demogr = process_psv(fp)
             except Exception as e:
                 print(f'Something is off ({type(e)}) processing {fp}, skipping it.')
                 continue
@@ -219,6 +148,8 @@ def main():
             
             # count as a processed segment
             metadata['size'] += 1
+            # add to class count
+            metadata['class_counts'][label] += 1
             
             # update sums for mean/std calculation
             valid_obs_mask = ~np.isnan(obs)

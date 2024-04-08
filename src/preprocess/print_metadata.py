@@ -6,12 +6,13 @@ def parse_args():
     parser.add_argument('fp', type=str, help='Path to the HDF5 file containing metadata.')
     return parser.parse_args()
 
-def load_metadata(file_path):
-    with h5py.File(file_path, 'r') as file:
+def load_metadata(fp):
+    with h5py.File(fp, 'r') as file:
         # Access the 'meta' group where metadata is stored
         meta_group = file['meta']
         metadata = {}
         for key in meta_group.keys():
+            print(key, meta_group[key].dtype)
             # For arrays or lists, convert them to a Python list for easier handling
             if len(meta_group[key].shape) > 0:
                 metadata[key] = list(meta_group[key][:])
@@ -28,6 +29,7 @@ def print_metadata(metadata):
     print(f"Number of sensors: {metadata['num_sensors']}")
     print(f"Number of classes: {metadata['num_classes']}")
     print(f"Class names: {', '.join(metadata['class_names'])}")
+    print(f"Sample counts in each class: {', '.join(str(x) for x in metadata['class_counts'])}")
     print(f"Sample interval: {metadata['sample_interval']}")
     print(f"Observed value statistics:")
     sensor_info = zip(metadata['sensor_names'], metadata['mean'], metadata['std'])

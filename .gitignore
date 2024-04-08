@@ -88,6 +88,6 @@ __pycache__/
 slurm/
 
 # Ignore everything in the data directory
-data/*
-raw_data/*
+data/
+raw_data/
 raindrop_processed_data/
