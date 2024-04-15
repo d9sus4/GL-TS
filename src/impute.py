@@ -20,6 +20,7 @@ from dataclasses import dataclass, asdict
 import numpy as np
 from scipy import interpolate
 from sklearn.cluster import KMeans
+import xgboost as xgb
 
 
 from dataset import MyHDF5Handler
@@ -28,38 +29,47 @@ from pixelhop.saab import Saab
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Impute a preprocessed multivariate time series (missing values included) dataset.')
-    parser.add_argument('--fp', type=str, default='../../data/',
+    parser.add_argument('--fp', type=str, default='../data/P19.hdf5',
                         help='Path to the processed dataset hdf5 file.')
-    parser.add_argument('--strat', choices=['zero', 'mean', 'forward', 'linear', 'spline', 'ours'],
+    parser.add_argument('--strat', choices=['zero', 'mean', 'forward', 'linear', 'spline', 'kmeans', 'xgboost'],
                         help='Choose imputation strategy.')
-    parser.add_argument('--out_dir', type=str, default='../../data/',
+    parser.add_argument('--mrthold', type=float, default=1., help='Missing rate threshold for sensor dropping before imputing, default is 1 (no dropping)')
+    parser.add_argument('--out_dir', type=str, default='../data/',
                         help='Path to the directory where the output will be stored.')
     args = parser.parse_args()
     return args
 
 
 @dataclass
-class OurImputerConfig:
+class KMeansImputerConfig:
     W: int = 3
     stride: int = 1
     num_bins: int = 4
     num_kernels: int = 16
     num_clusters: int = 16
 
-def impute_all_zero(obs, mask):
+@dataclass
+class XGBoostImputerConfig:
+    W: int = 3 # 2W+1 window
+
+def impute_all_zero(obs, mask=None):
     """Impute all NaNs with 0."""
+    if mask is None:
+        mask = ~np.isnan(obs)
     imp = np.copy(obs)
     imp[~mask] = 0
     return imp
 
-def impute_mean(obs, mask, mean):
+def impute_mean(obs, mean, mask=None):
     """Impute all NaNs with the mean value of their respective sensor."""
+    if mask is None:
+        mask = ~np.isnan(obs)
     imp = np.copy(obs)
     for i in range(obs.shape[1]):
         imp[~mask[:, i], i] = mean[i]
     return imp
 
-def impute_forward_fill(obs, mask, mean):
+def impute_forward_fill(obs, mean):
     """Impute starting NaNs with mean, then forward fill the rest."""
     imp = np.copy(obs)
     for i in range(obs.shape[1]):
@@ -70,8 +80,10 @@ def impute_forward_fill(obs, mask, mean):
                 imp[j, i] = imp[j-1, i]
     return imp
 
-def impute_linear(obs, mask, mean, stamp=None):
+def impute_linear(obs, mean, mask=None, stamp=None):
     """Linear interpolation with time stamps and conditions for all-NaN columns or single non-NaN values."""
+    if mask is None:
+        mask = ~np.isnan(obs)
     imp = np.copy(obs)
     if stamp is None:
         stamp = np.arange(obs.shape[0])  # Use index as x-axis if stamp is None
@@ -93,8 +105,10 @@ def impute_linear(obs, mask, mean, stamp=None):
         imp[:, i] = f(stamp)
     return imp
 
-def impute_spline(obs, mask, mean, stamp=None):
+def impute_spline(obs, mean, mask=None, stamp=None):
     """Cubic spline interpolation with time stamps for smoother imputation."""
+    if mask is None:
+        mask = ~np.isnan(obs)
     imp = np.copy(obs)
     if stamp is None:
         stamp = np.arange(obs.shape[0])  # Use index as x-axis if stamp is None
@@ -187,7 +201,7 @@ def main():
 
     db_name, db_ext = os.path.splitext(os.path.basename(args.fp))
 
-    imp_handler = MyHDF5Handler(os.path.join(args.out_dir, db_name+'_'+args.strat+db_ext), read_only=False)
+    imp_handler = MyHDF5Handler(os.path.join(args.out_dir, db_name+'_'+args.strat+db_ext), read_only=False, overwrite=True)
 
     all_segment_keys = src_handler.get_all_segment_keys()
 
@@ -201,7 +215,7 @@ def main():
             mask = src_segment['mask']
             label = src_segment['label']
             demogr = src_segment['demogr']
-            imp = impute_spline(obs, mask, mean, stamp=stamp)
+            imp = impute_spline(obs, mean, mask=mask, stamp=stamp)
             imp_handler.add_segment(segment_key, {
                 'obs': imp,
                 'stamp': stamp,
@@ -211,10 +225,10 @@ def main():
             })
         imp_handler.set_metadata(meta_dict=src_metadata)
         
-    elif args.strat == 'ours':
+    elif args.strat == 'kmeans':
         # some constants
-        config = OurImputerConfig()
-        print(f"Our imputer's config: {json.dumps(asdict(config))}")
+        config = KMeansImputerConfig()
+        print(f"K-means imputer's config: {json.dumps(asdict(config))}")
         W = config.W
         stride = config.stride
         num_bins = config.num_bins
@@ -231,7 +245,7 @@ def main():
             mask = src_segment['mask']
             label = src_segment['label']
             demogr = src_segment['demogr']
-            obs_hat = impute_spline(obs, mask, mean, stamp=stamp)
+            obs_hat = impute_spline(obs, mean, mask=mask, stamp=stamp)
             conf, conf_vec = calculate_imputation_confidence_global_window(mask, W)
             patches = slice_up(obs_hat, obs, W, stride, conf_vec)
             all_patches[segment_key] = patches
@@ -315,7 +329,7 @@ def main():
             mask = src_segment['mask']
             label = src_segment['label']
             demogr = src_segment['demogr']
-            obs_hat = impute_spline(obs, mask, mean, stamp=stamp)
+            obs_hat = impute_spline(obs, mean, mask=mask, stamp=stamp)
             conf, conf_vec = calculate_imputation_confidence_global_window(mask, W)
             imp = np.zeros_like(obs_hat, dtype=np.float32)
             imp += conf * obs_hat
@@ -340,6 +354,122 @@ def main():
             # if i == 100:
             #     break
         imp_handler.set_metadata(meta_dict=src_metadata)
+
+    elif args.strat == 'xgboost':
+        # some constants
+        config = XGBoostImputerConfig()
+        print(f"XGBoost imputer's config: {json.dumps(asdict(config))}")
+        W = config.W
+
+        all_segments = {}
+        all_patches = []
+        mean = src_metadata['mean']
+
+        num_sensors = src_metadata['num_sensors']
+        if args.mrthold < 1.:
+            sensor_mask = src_metadata['missing_rates'] <= args.mrthold
+            print(f"Dropped sensors with high missing rates (>{args.mrthold:.2%})")
+            num_sensors = np.sum(sensor_mask)
+            print(f"Remaining number of sensors: {num_sensors}")
+
+        for i, segment_key in enumerate(tqdm(all_segment_keys, desc=f'Slicing episodes into patches with W={W}...')):
+            src_segment = src_handler.get_segment(segment_key)
+            obs = src_segment['obs']
+            stamp = src_segment['stamp']
+            mask = src_segment['mask']
+            label = src_segment['label']
+            demogr = src_segment['demogr']
+
+            # drop features columns with high missing rates:
+            if args.mrthold < 1.:
+                obs = obs[:,sensor_mask]
+                mask = mask[:,sensor_mask]
+
+            # obs_hat = impute_spline(obs, mean, mask=mask, stamp=stamp)
+            # conf, conf_vec = calculate_imputation_confidence_global_window(mask, W)
+            seq_len = len(stamp)
+            for time_idx in range(W, seq_len-W): # slice center time index
+                all_patches.append({
+                    'obs': obs[time_idx-W: time_idx+W+1],
+                    # 'obs_hat': obs_hat[time_idx-W: time_idx+W+1],
+                    # 'conf': conf_vec[time_idx],
+                    'idx': time_idx,
+                    'key': segment_key,
+                    })
+            all_segments[segment_key] = {
+                'obs': obs,
+                'stamp': stamp,
+                'mask': mask,
+                'label': label,
+                'demogr': demogr,
+            }
+            # if i == 100:
+            #     break
+
+        models = []
+
+        for s in tqdm(range(num_sensors), desc="Training models per sensor..."): # for each sensor, train a XGBoost for imputation
+            X = [] # feature list, each feature is a 1-D array
+            Y = [] # target list, each target is also a 1-D array, or a scalar
+
+            for patch in all_patches:
+                obs = patch['obs']
+                if not np.isnan(obs[W][s]): # this patch can be used to train the model
+                    obs_copy = obs.copy()
+                    target = obs_copy[W][s]
+                    obs_copy[W][s] = np.nan
+                    obs_flatten = obs_copy.ravel() # flatten always return a copy, ravel returns a view wherever possible
+                    # print(obs_flatten[W*num_sensors+s]) # make sure the target is set to nan
+                    X.append(obs_flatten)
+                    Y.append(target)
+            
+            X = np.array(X)
+            Y = np.array(Y)
+            # print(X.shape)
+            # print(Y.shape)
+
+            # Define XGBoost model
+            model = xgb.XGBRegressor(objective='reg:squarederror')
+
+            # Train the model
+            model.fit(X, Y)
+
+            models.append(model)
+
+            # predictions = model.predict(X)
+
+            # print("Predictions:", predictions)
+            # print("Ground truths:", Y)
+
+        # interpolate with xgboost
+        for patch in tqdm(all_patches, desc="Interpolating with XGBoost..."):
+            obs = patch['obs']
+            segment_key = patch['key']
+            idx = patch['idx']
+            for s in range(num_sensors):
+                if np.isnan(obs[W][s]): # this position needs to be interpolated
+                    src_segment = all_segments[segment_key]
+                    src_segment['obs'][idx][s] = models[s].predict(np.array([obs.flatten()]))[0]
+        # interpolate head and tail with spline
+        for segment_key, src_segment in tqdm(all_segments.items(), desc="Writing results..."):
+            obs = src_segment['obs']
+            mask = src_segment['mask']
+            stamp = src_segment['stamp']
+            label = src_segment['label']
+            demogr = src_segment['demogr']
+            obs = impute_forward_fill(obs, mean) # no mask, so impute_spline calculates mask using obs
+            imp_handler.add_segment(segment_key, {
+                'obs': obs,
+                'stamp': stamp,
+                'mask': mask,
+                'label': label,
+                'demogr': demogr,
+            })
+        imp_metadata = src_metadata.copy()
+        imp_metadata = MyHDF5Handler.drop_sensors(imp_metadata, sensor_mask)
+        imp_handler.set_metadata(imp_metadata)
+        print(f'Imputed dataset has been saved as {imp_handler.fp}')
+        imp_handler.print_metadata()
 
     else:
         raise NotImplementedError()

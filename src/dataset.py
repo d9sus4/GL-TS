@@ -1,13 +1,18 @@
 import h5py
 import os
+from tabulate import tabulate
+import argparse
+import numpy as np
 
 class MyHDF5Handler:
-    def __init__(self, fp, read_only: bool):
+    def __init__(self, fp, read_only:bool=False, overwrite:bool=False):
         self.fp = fp
         self.read_only = read_only
+        self.overwrite = overwrite
         
         # Check if the file exists; if not, create the file and initial groups
-        if not os.path.exists(fp) and not read_only:
+        if (not os.path.exists(fp) and not read_only) or (os.path.exists(fp) and overwrite):
+            print(f"fuck fuck fuck {fp}")
             with self._open_file(mode='w') as f:
                 f.create_group('data')
                 f.create_group('meta')
@@ -63,18 +68,38 @@ class MyHDF5Handler:
     def print_metadata(self):
         metadata = self.get_metadata()
         print("-----Dataset metadata info-----")
+        print(f"Dataset name: {metadata['name']}")
         print(f"Dataset size: {metadata['size']}")
+        print(f"Sample interval: {metadata['sample_interval']}")
         print(f"Number of sensors: {metadata['num_sensors']}")
         print(f"Number of classes: {metadata['num_classes']}")
-        print(f"Class names: {', '.join(metadata['class_names'])}")
-        print(f"Sample counts in each class: {', '.join(str(x) for x in metadata['class_counts'])}")
-        print(f"Sample interval: {metadata['sample_interval']}")
-        print(f"Observed value statistics:")
-        sensor_info = zip(metadata['sensor_names'], metadata['mean'], metadata['std'])
-        print("{:<20} {:<15} {:<15}".format('Sensor Name', 'Mean', 'Std'))
-        for sensor_name, mean, std in sensor_info:
-            print("{:<20} {:<15} {:<15}".format(sensor_name, f"{mean:.2f}", f"{std:.2f}"))
+        print(f"Average sequence length: {metadata['avg_seq_len']:.2f}")
+        print(f"Sequence length range: [{metadata['min_seq_len']}, {metadata['max_seq_len']}]")
+        print(f"Sequence length sigma: {metadata['seq_len_sigma']:.2f}\n")
+        class_table = []
+        for i in range(metadata['num_classes']):
+            ratio = metadata['class_counts'][i] / metadata['size']
+            class_table.append([i, metadata['class_names'][i], metadata['class_counts'][i], f"{ratio:.2%}"])
+        print("Classes info:")
+        print(tabulate(class_table, headers=["", "Class name", "Class count", "Ratio"], tablefmt="grid"))
+        sensor_table = []
+        for i in range(metadata['num_sensors']):
+            sensor_table.append([i, metadata['sensor_names'][i], f"{metadata['mean'][i]:.2f}", f"{metadata['std'][i]:.2f}", f"{metadata['missing_rates'][i]:.2%}", 'Categorical' if metadata['is_categorical'][i] else 'Continuous'])
+        print("\nSensors info:")
+        print(tabulate(sensor_table, headers=["", "Sensor name", "Mean value", "Standard deviation", "Missing rate", "Type"], tablefmt="grid"))
     
+    @staticmethod
+    def drop_sensors(metadata, mask: np.ndarray):
+        """Return metadata after dropping selected sensors."""
+        metadata = metadata.copy()
+        metadata['num_sensors'] = np.sum(mask)
+        metadata['sensor_names'] = [name for name, keep in zip(metadata['sensor_names'], mask) if keep]
+        metadata['mean'] = metadata['mean'][mask]
+        metadata['std'] = metadata['std'][mask]
+        metadata['missing_rates'] = metadata['missing_rates'][mask]
+        metadata['is_categorical'] = metadata['is_categorical'][mask]
+        return metadata
+
     def add_segment(self, key, data_dict):
         """Add the data_dict into data group, with the dataset name defined as key."""
         if self.read_only:
@@ -100,3 +125,18 @@ class MyHDF5Handler:
             meta_group = f.create_group('meta')
             for key, value in meta_dict.items():
                 meta_group.create_dataset(key, data=value)
+
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Impute a preprocessed multivariate time series (missing values included) dataset.')
+    parser.add_argument('--fp', type=str, default='../data/P19.hdf5',
+                        help='Path to the processed dataset hdf5 file.')
+    args = parser.parse_args()
+    handler = MyHDF5Handler(args.fp, read_only=True)
+    handler.print_metadata()
+
+
+
+if __name__ == '__main__':
+    main()

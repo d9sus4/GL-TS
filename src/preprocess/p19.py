@@ -32,6 +32,7 @@ This program takes 2 keyword arguments:
             `class_counts` (ndarray of int32): number of samples in each class, sized (num_classes).
             `mean` (ndarray of float32): mean observed values in each sensor, shaped as (num_sensors).
             `std` (ndarray of float32): std of observed values in each sensor, shaped as (num_sensors).
+            `missing_rates` (ndarray of float32): missing rates of each sensor modality, shaped as (num_sensors).
             `is_categorical` (ndarray of boolean): True if there is any categorical column (sensor).
             `sample_interval` (float32): dataset's constant sample interval in hour. Note that P19 is originally sampled at 1.0 hr.
                 In case this term is negative or NaN, observations may not be regularly sampled, i.e. consecutive rows may not have same time intervals in between them.
@@ -47,8 +48,9 @@ import os
 import h5py
 from glob import glob
 from tqdm import tqdm
+from tabulate import tabulate
 
-from ..dataset import MyHDF5Handler
+# from ..dataset import MyHDF5Handler
 # TODO: use handler to read & write hdf5
 
 
@@ -99,13 +101,16 @@ def main():
     psv_paths = glob(os.path.join(args.root_dir, 'training_set*/p*.psv'))
     print(f'Found {len(psv_paths)} psv files. Start processing.')
 
-    # accumulators for calculating mean and std
+    # accumulators
     sum_obs = np.zeros(34, dtype=np.float64)
     sum_sq_obs = np.zeros(34, dtype=np.float64)
     count_obs = np.zeros(34, dtype=np.float64)
+    count_nan_obs = np.zeros(34, dtype=np.float64)
+    seq_lens = []
 
     # init metadata records
     metadata = {
+        'name': 'P19',
         'size': 0, # to be counted later on the fly
         'num_sensors': 34,  # first 34 columns are sensors
         'num_classes': 2,  # binary classification for sepsis
@@ -114,8 +119,13 @@ def main():
         'class_counts': np.zeros(2, dtype=np.int32), # to be counted later on the fly
         'mean': None, # to be filled later
         'std': None, # to be filled later
+        'missing_rates': None, # to be filled later
         'is_categorical': np.array([False] * 34),  # no categorical feature in P19
-        'sample_interval': args.resample if args.resample is not None and args.resample > 0 else np.nan
+        'sample_interval': args.resample if args.resample is not None and args.resample > 0 else np.nan,
+        'avg_seq_len': None, # to be filled later TODO
+        'max_seq_len': None, # to be filled later TODO
+        'min_seq_len': None, # to be filled later TODO
+        'seq_len_sigma': None, # to be filled later TODO
     }
 
     # get column names
@@ -132,6 +142,8 @@ def main():
             except Exception as e:
                 print(f'Something is off ({type(e)}) processing {fp}, skipping it.')
                 continue
+
+            seq_lens.append(len(stamp))
                 
             # segment group name is the base filename without .psv
             base_name = os.path.splitext(os.path.basename(fp))[0]
@@ -157,20 +169,55 @@ def main():
             sum_sq_obs += np.where(valid_obs_mask, obs**2, 0).sum(axis=0)
             count_obs += valid_obs_mask.sum(axis=0)
 
+            # count missing values
+            nan_obs_mask = np.isnan(obs)
+            count_nan_obs += nan_obs_mask.sum(axis=0)
+
         # calculate mean and std
         mean_obs = sum_obs / count_obs
         var_obs = (sum_sq_obs - sum_obs**2 / count_obs) / count_obs
         std_obs = np.sqrt(var_obs)
 
-        # update metadata with calculated mean and std
+        # calculate missing rates
+        total_obs = count_obs + count_nan_obs
+        missing_rates = count_nan_obs / total_obs
+
+        # update metadata with calculated mean, std, and missing rates
         metadata['mean'] = mean_obs.astype(np.float32)
         metadata['std'] = std_obs.astype(np.float32)
+        metadata['missing_rates'] = missing_rates.astype(np.float32)
+        
+        metadata['avg_seq_len'] = np.mean(seq_lens)
+        metadata['max_seq_len'] = np.max(seq_lens)
+        metadata['min_seq_len'] = np.min(seq_lens)
+        metadata['seq_len_sigma'] = np.std(seq_lens)
         
         # add metadata to meta group
         for key, value in metadata.items():
             meta_group.create_dataset(key, data=value)
 
     print(f'Processed {metadata["size"]} files and dataset saved to {hdf5_file_path}.')
+
+    print("-----Dataset metadata info-----")
+    print(f"Dataset name: {metadata['name']}")
+    print(f"Dataset size: {metadata['size']}")
+    print(f"Sample interval: {metadata['sample_interval']}")
+    print(f"Number of sensors: {metadata['num_sensors']}")
+    print(f"Number of classes: {metadata['num_classes']}")
+    print(f"Average sequence length: {metadata['avg_seq_len']}")
+    print(f"Sequence length range: [{metadata['min_seq_len']}, {metadata['max_seq_len']}]")
+    print(f"Sequence length sigma: {metadata['seq_len_sigma']}\n")
+    class_table = []
+    for i in range(metadata['num_classes']):
+        ratio = metadata['class_counts'][i] / metadata['size']
+        class_table.append([i, metadata['class_names'][i], metadata['class_counts'][i], f"{ratio:.2%}"])
+    print("Classes info:")
+    print(tabulate(class_table, headers=["", "Class name", "Class count", "Ratio"], tablefmt="grid"))
+    sensor_table = []
+    for i in range(metadata['num_sensors']):
+        sensor_table.append([i, metadata['sensor_names'][i], f"{metadata['mean'][i]:.2f}", f"{metadata['std'][i]:.2f}", f"{metadata['missing_rates'][i]:.2%}"])
+    print("\nSensors info:")
+    print(tabulate(sensor_table, headers=["", "Sensor name", "Mean value", "Standard deviation", "Missing rate"], tablefmt="grid"))
 
 
 if __name__ == '__main__':
