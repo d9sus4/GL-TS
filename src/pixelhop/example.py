@@ -7,7 +7,7 @@ import numpy as np
 import xgboost as xgb
 import time
 import os
-import lib.feat_utils as FEAT
+import .lib.feature-test. as FEAT
 
 import pickle
 import lib.layer as LAYER

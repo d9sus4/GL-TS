@@ -3,6 +3,7 @@ import os
 from tabulate import tabulate
 import argparse
 import numpy as np
+import pickle
 
 class MyHDF5Handler:
     def __init__(self, fp, read_only:bool=False, overwrite:bool=False):
@@ -12,7 +13,6 @@ class MyHDF5Handler:
         
         # Check if the file exists; if not, create the file and initial groups
         if (not os.path.exists(fp) and not read_only) or (os.path.exists(fp) and overwrite):
-            print(f"fuck fuck fuck {fp}")
             with self._open_file(mode='w') as f:
                 f.create_group('data')
                 f.create_group('meta')
@@ -126,6 +126,32 @@ class MyHDF5Handler:
             for key, value in meta_dict.items():
                 meta_group.create_dataset(key, data=value)
 
+def h5_to_pkl(fp):
+    handler = MyHDF5Handler(fp)
+    metadata = handler.get_metadata()
+    print(metadata)
+    all_keys = handler.get_all_segment_keys()
+    print(len(all_keys))
+    seg_example = handler.get_segment(all_keys[0])
+    print(all_keys[0])
+    print(seg_example.keys())
+    ds_dict = {
+        'meta': metadata,
+        'data': [],
+    }
+    for key in all_keys:
+        data_dict = handler.get_segment(key)
+        data_dict['name'] = key
+        ds_dict['data'].append(data_dict)
+    print(len(ds_dict['data']))
+    ds_dir, ds_name = os.path.split(fp)
+    new_name = os.path.splitext(ds_name)[0] + '.pkl'
+    new_path = os.path.join(ds_dir, new_name)
+    with open(new_path, 'wb') as f:
+        pickle.dump(ds_dict, f)
+
+
+
 
 
 def main():
@@ -139,4 +165,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+    h5_to_pkl('../data/P19_linear.hdf5')

@@ -224,6 +224,35 @@ def main():
                 'demogr': demogr,
             })
         imp_handler.set_metadata(meta_dict=src_metadata)
+
+    elif args.strat == 'linear':
+        mean = src_metadata['mean']
+        num_sensors = src_metadata['num_sensors']
+        if args.mrthold < 1.:
+            sensor_mask = src_metadata['missing_rates'] <= args.mrthold
+            print(f"Dropped sensors with high missing rates (>{args.mrthold:.2%})")
+            num_sensors = np.sum(sensor_mask)
+            print(f"Remaining number of sensors: {num_sensors}")
+        # for segment_key in all_segment_keys:
+        for i, segment_key in enumerate(tqdm(all_segment_keys, desc="Processing segments...")):
+            src_segment = src_handler.get_segment(segment_key)
+            obs = src_segment['obs']
+            stamp = src_segment['stamp']
+            mask = src_segment['mask']
+            label = src_segment['label']
+            demogr = src_segment['demogr']
+            if args.mrthold < 1.:
+                obs = obs[:,sensor_mask]
+                mask = mask[:,sensor_mask]
+            imp = impute_linear(obs, mean, mask=mask, stamp=stamp)
+            imp_handler.add_segment(segment_key, {
+                'obs': imp,
+                'stamp': stamp,
+                'mask': mask,
+                'label': label,
+                'demogr': demogr,
+            })
+        imp_handler.set_metadata(meta_dict=src_metadata)
         
     elif args.strat == 'kmeans':
         # some constants

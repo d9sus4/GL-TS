@@ -2,7 +2,7 @@
 # PixelHop and PixelHop++ (Module 1)
 # modified from https://github.com/ChengyaoWang/PixelHop-_c-wSaab/blob/master/saab.py
 
-from feature.cwSaab import cwSaab
+from cwSaab import cwSaab
 import pickle
 
 class Pixelhop(cwSaab):

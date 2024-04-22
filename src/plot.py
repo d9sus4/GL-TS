@@ -28,7 +28,7 @@ def plot_imputed_timeseries(stamp, obs, mask, strat=None):
 def main():
 
     STRAT = ['spline', 'kmeans', 'xgboost'][2]
-    EG_IDX = 0
+    EG_IDX = 666
     handler = MyHDF5Handler(f'../data/P19_{STRAT}.hdf5', read_only=True) # source dataset
     handler.print_metadata()
 
