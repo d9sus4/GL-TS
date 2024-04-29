@@ -4,6 +4,8 @@ from tabulate import tabulate
 import argparse
 import numpy as np
 import pickle
+from torch import nn
+from torch.utils.data import Dataset
 
 class MyHDF5Handler:
     def __init__(self, fp, read_only:bool=False, overwrite:bool=False):
@@ -149,6 +151,11 @@ def h5_to_pkl(fp):
     new_path = os.path.join(ds_dir, new_name)
     with open(new_path, 'wb') as f:
         pickle.dump(ds_dict, f)
+
+
+class MTSDataset(Dataset):
+    def __init__(self):
+        pass
 
 
 
