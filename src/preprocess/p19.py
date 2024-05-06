@@ -51,7 +51,6 @@ from tqdm import tqdm
 from tabulate import tabulate
 
 # from ..dataset import MyHDF5Handler
-# TODO: use handler to read & write hdf5
 
 
 def parse_args():
@@ -165,8 +164,8 @@ def main():
             
             # update sums for mean/std calculation
             valid_obs_mask = ~np.isnan(obs)
-            sum_obs += np.where(valid_obs_mask, obs, 0).sum(axis=0)
-            sum_sq_obs += np.where(valid_obs_mask, obs**2, 0).sum(axis=0)
+            sum_obs += np.where(valid_obs_mask, obs, 0.).sum(axis=0)
+            sum_sq_obs += np.where(valid_obs_mask, obs**2, 0.).sum(axis=0)
             count_obs += valid_obs_mask.sum(axis=0)
 
             # count missing values
