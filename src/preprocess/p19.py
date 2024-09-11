@@ -1,5 +1,5 @@
 """
-Preprocess PhysioNet Challenge 2019 Sepsis Early Prediction (P19) dataset.
+PhysioNet Challenge 2019 Sepsis Early Prediction (P19) dataset - Preprocessing Scripts.
 
 The purpose of preprocessing:
     - Getting rid of outliers.
@@ -13,17 +13,18 @@ This program takes 3 keyword arguments:
     - `out_dir`: Path to the output directory.
 
 Output:
-    - A pickle file will be saved to `out_dir/P19.pkl`, containing a dictionary with two keys: `data` and `meta`.
+    - A pickle file will be saved to `out_dir/p19_clean.pkl`, containing a dictionary with two keys: `data` and `meta`.
 
 The pickle file structure:
     - `data` (list of dictionaries): Each dictionary represents a time series segment (episode) with the following key-value pairs:
-        - `obs` (ndarray of float32): Raw (non-normalized, categorical features are replaced by integer labels if any) sensor observation array.
-            - Shape: (sequence_length, num_sensors).
+        - `var` (ndarray of float32): Raw (non-normalized, categorical features are replaced by integer labels if any) var observation array.
+            - Shape: (seq_len, num_vars).
             - Missing values are NaNs.
-        - `stamp` (ndarray of float32): Timestamps of the observations. Shape: (sequence_length).
+        - `time` (ndarray of float32): Timestamps of the observations. Shape: (seq_len).
+        - `interval` (ndarray of float32): interval since last observation. Shape: (seq_len).
         - `mask` (ndarray of boolean): Missing observation mask, where `True` indicates a real observed value, and `False` indicates a missing value (which may be imputed later). Same shape as `obs`.
-        - `label` (int): Classification label of the time series.
-        - `demogr` (dictionary): Demographic information containing the following keys:
+        - `label` (ndarray of float32): Label of the time series. Shape: (num_labels)
+        - `static` (dictionary): Static, usually demographic information. In P19 specifically:
             - `age` (int): Age of the patient, with 100 representing patients aged 90 or above.
             - `gender` (int): 0 for female and 1 for male.
             - `unit_id` (int): 0 for MICU, 1 for SICU, and -1 for unknown.
@@ -31,19 +32,23 @@ The pickle file structure:
             - `icu_los` (float): Length of ICU stay in hours.
 
     - `meta` (dictionary): Metadata providing information about the processed dataset, including:
+        - `name` (str): Name of dataset.
+        - `desc` (any): Just a description, you can put any info here.
+        - `impute_strat` (str): Name of the imputer, None if not imputed.
         - `size` (int): Number of segments in the dataset.
-        - `num_sensors` (int): Number of sensors (feature columns).
+        - `num_vars` (int): Number of vars (feature columns).
         - `num_classes` (int): Number of classification classes.
-        - `sensor_names` (list of strings): Names of the sensors, sized `(num_sensors)`.
-        - `class_names` (list of strings): Names of the classes, from 0 to `num_classes-1`.
-        - `class_counts` (ndarray of int32): Number of samples in each class, sized `(num_classes)`.
-        - `mean` (ndarray of float32): Mean observed values for each sensor, shaped as `(num_sensors)`.
-        - `std` (ndarray of float32): Standard deviation of observed values for each sensor, shaped as `(num_sensors)`.
-        - `missing_rates` (ndarray of float32): Missing rates for each sensor modality, shaped as `(num_sensors)`.
-        - `is_categorical` (ndarray of boolean): Indicates if there are any categorical columns (sensors).
+        - `var_names` (list of strings): Names of the vars, sized `(num_vars)`.
+        - `label_names` (list of strings): Names of the labels, from 0 to `num_labels-1`.
+        - `balance` (list of dictionaries): Some info about dataset balance.
+        - `mean` (ndarray of float32): Mean observed values for each variable, shaped as `(num_vars)`.
+        - `std` (ndarray of float32): Standard deviation of observed values for each variable, shaped as `(num_vars)`.
+        - `missing_rates` (ndarray of float32): Missing rates for each variable, shaped as `(num_vars)`.
+        - `is_categorical` (ndarray of boolean): Indicates if there are any categorical columns (vars).
         - `sample_interval` (float32): Dataset's constant sample interval in hours. P19 is originally sampled at 1.0 hr.
-            - If this value is negative or NaN, observations may not be regularly sampled, meaning consecutive rows may not have consistent time intervals.
+            - If this value is negative or NaN or None, observations may not be regularly sampled, meaning consecutive rows may not have consistent time intervals.
             - In such cases, `stamp` can be meaningful. Otherwise, `stamp` is redundant and can be inferred by multiplying the row index by the sample rate (in hours).
+TODO: docstring updated, but data structure is to be updated.
 """
 
 import pandas as pd
@@ -55,16 +60,16 @@ from glob import glob
 from tqdm import tqdm
 from tabulate import tabulate
 
-from ..utils import print_metadata
+from ..utils import print_metadata_legacy
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Preprocess P19.')
-    parser.add_argument('--root_dir', type=str, default='./raw_data/P19/training/',
+    parser.add_argument('--root_dir', type=str, default='./raw_data/p19/training/',
                         help='Path to the original P19 data\'s root directory that contains both training_setA and training_setB.')
     parser.add_argument('--resample', type=float, default=None,
                         help='Resampling interval in hour. Default is None (no-resampling).')  # useless for now
-    parser.add_argument('--out_dir', type=str, default='./data/',
+    parser.add_argument('--out_dir', type=str, default='./data/p19',
                         help='Path to the directory where the output will be stored.')
     args = parser.parse_args()
     return args
@@ -99,7 +104,7 @@ def main():
     args = parse_args()
 
     # define pickle file path
-    pkl_file_path = os.path.join(args.out_dir, 'P19.pkl')
+    pkl_file_path = os.path.join(args.out_dir, 'p19_clean.pkl')
     os.makedirs(args.out_dir, exist_ok=True)
 
     psv_paths = glob(os.path.join(args.root_dir, 'training_set*/p*.psv'))
@@ -114,11 +119,11 @@ def main():
 
     # initialize metadata records
     metadata = {
-        'name': 'P19',
+        'name': 'p19',
         'size': 0,  # to be counted later on the fly
-        'num_sensors': 34,  # first 34 columns are sensors
+        'num_vars': 34,  # first 34 columns are vars
         'num_classes': 2,  # binary classification for sepsis
-        'sensor_names': [],  # to be filled later
+        'var_names': [],  # to be filled later
         'class_names': ['Non-sepsis', 'Sepsis'],
         'class_counts': np.zeros(2, dtype=np.int32),  # to be counted later on the fly
         'mean': None,  # to be filled later
@@ -134,7 +139,7 @@ def main():
 
     # get column names
     example_df = pd.read_csv(psv_paths[0], sep='|')
-    metadata['sensor_names'] = example_df.columns.tolist()[:34]
+    metadata['var_names'] = example_df.columns.tolist()[:34]
 
     # initialize the data structure for the pickle file
     ds_dict = {
@@ -203,7 +208,7 @@ def main():
 
     print(f'Processed {metadata["size"]} files and dataset saved to {pkl_file_path}.')
 
-    print_metadata(metadata)
+    print_metadata_legacy(metadata)
 
 
 if __name__ == '__main__':
