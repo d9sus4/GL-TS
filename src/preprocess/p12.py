@@ -45,7 +45,7 @@ The pickle file structure:
             - In such cases, `stamp` can be meaningful. Otherwise, `stamp` is redundant and can be inferred by multiplying the row index by the sample rate (in hours).
 """
 
-# TODO: make it work 09/09
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -280,12 +280,12 @@ def main():
 
         for split_name in ['train', 'valid', 'test']:
             data_list, metadata = process_split(split_name, raw_data_list_splits[split_name])
-            save_pkl('p12_clean_'+split_name, data_list, metadata)
+            save_pkl('p12_clean_'+split_name+'.pkl', data_list, metadata)
         
 
     else:
         data_list, metadata = process_split('whole', raw_data_list)
-        save_pkl('p12_clean_whole', data_list, metadata)
+        save_pkl('p12_clean_whole.pkl', data_list, metadata)
 
         
 

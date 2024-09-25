@@ -4,7 +4,13 @@ Utility functions.
 
 from tabulate import tabulate
 import numpy as np
+import pickle
 
+
+def load_metadata_from_pickle(filename):
+    with open(filename, 'rb') as f:
+        dataset = pickle.load(f)
+    return dataset['meta']
 
 def print_metadata_legacy(metadata):
     print("-----Dataset metadata info-----")
