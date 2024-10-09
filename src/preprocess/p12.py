@@ -113,6 +113,7 @@ def process_split(split_name: str, raw_data_list: list):
         'size': 0,  # to be counted later on the fly
         'num_vars': len(variables),
         'var_names': variables,
+        'label_names': label_names,
         'mean': None,  # to be filled later
         'std': None,  # to be filled later
         'missing_rates': None,  # to be filled later

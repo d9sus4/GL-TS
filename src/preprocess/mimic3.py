@@ -196,21 +196,23 @@ def preprocess(dir, out_path):
     # init metadata records
     metadata = {
         'name': 'mimic3_ihm',
+        'desc': 'Cleaned MIMIC-III Benchmark for in-hospital mortality prediction.',
+        'split': 'train' if 'train' in dir else 'test',
+        'time_unit': 'hour',
+        'impute_strat': None,
         'size': 0, # to be counted later on the fly
-        'num_sensors': num_sensors,
-        'num_classes': 2,  # binary classification for sepsis
-        'sensor_names': np.array([x for x, _, _ in FEATURE_LIST]),
-        'class_names': np.array(['survival', 'mortality']),
-        'class_counts': np.zeros(2, dtype=np.int32), # to be counted later on the fly
+        'num_vars': num_sensors,
+        'var_names': np.array([x for x, _, _ in FEATURE_LIST]),
+        'label_names': ['mortality'],
         'mean': None, # to be filled later
         'std': None, # to be filled later
         'missing_rates': None, # to be filled later
         'is_categorical': np.array([x == 'categorical' for _, _, x in FEATURE_LIST]),
         'sample_interval': np.nan, # no resampling
-        'avg_seq_len': None, # to be filled later TODO
+        'mean_seq_len': None, # to be filled later TODO
         'max_seq_len': None, # to be filled later TODO
         'min_seq_len': None, # to be filled later TODO
-        'seq_len_sigma': None, # to be filled later TODO
+        'sigma_seq_len': None, # to be filled later TODO
     }
 
     # accumulators
@@ -252,24 +254,31 @@ def preprocess(dir, out_path):
             # create isnan mask
             mask = ~np.isnan(obs)
 
+            interval = np.zeros_like(obs)
+            for col in range(obs.shape[1]):
+                last_observed_time = 0
+                for row in range(obs.shape[0]):
+                    interval[row, col] = time[row] - last_observed_time
+                    if mask[row, col]: # observed here
+                        last_observed_time = time[row]
+
         except Exception as e:
             print(f"Something is off ({type(e)}) when reading {key}, skipped it")
             continue
 
         # create data dict
         data_dict = {
-            'name': key,
-            'obs': obs,
+            'id': key,
             'time': time,
+            'var': obs,
             'mask': mask,
+            'interval': interval,
             'label': label,
         }
         all_data.append(data_dict)
         seq_lens.append(len(time))
         # count as a processed episode
         metadata['size'] += 1
-        # add to class count
-        metadata['class_counts'][label] += 1
 
         # update sums for mean/std calculation
         sum_obs += np.where(mask, obs, 0).sum(axis=0)
@@ -292,10 +301,10 @@ def preprocess(dir, out_path):
     metadata['std'] = std_obs.astype(np.float32)
     metadata['missing_rates'] = missing_rates.astype(np.float32)
     
-    metadata['avg_seq_len'] = np.mean(seq_lens)
+    metadata['mean_seq_len'] = np.mean(seq_lens)
     metadata['max_seq_len'] = np.max(seq_lens)
     metadata['min_seq_len'] = np.min(seq_lens)
-    metadata['seq_len_sigma'] = np.std(seq_lens)
+    metadata['sigma_seq_len'] = np.std(seq_lens)
 
     # save output
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -310,8 +319,8 @@ def preprocess(dir, out_path):
 
 
 def main():
-    preprocess('./raw_data/mimic3/mortality/train/', './data/MIMIC-III/mortality/train.pkl')
-    preprocess('./raw_data/mimic3/mortality/test/', './data/MIMIC-III/mortality/test.pkl')
+    preprocess('./raw_data/mimic3/mortality/train/', './data/mimic3/mimic3_mortality_train.pkl')
+    preprocess('./raw_data/mimic3/mortality/test/', './data/mimic3/mimic3_mortality_test.pkl')
 
 
 if __name__ == '__main__':
